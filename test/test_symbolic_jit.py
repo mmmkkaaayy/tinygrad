@@ -164,5 +164,60 @@ class TestSymbolicJit(unittest.TestCase):
       np.testing.assert_allclose(symbolic, expected, atol=1e-6, rtol=1e-6)
     assert len(jf.jit_cache) == 1
 
+  def test_whisper_attention(self):
+    Tensor.manual_seed(0)
+    def block(qkvo_weights, x, sk=None, sv=None, jit_ctx=None):
+      q, k, v = x.linear(qkvo_weights[0]), x.linear(qkvo_weights[1]), x.linear(qkvo_weights[2])
+      if sk is not None:
+        k,v = sk.cat(k, dim=1), sv.cat(v, dim=1)
+
+      last_dim = q.shape[-1] // 6
+      aq = q.reshape(*q.shape[:2], 6, last_dim).permute(0, 2, 1, 3)
+      ak = k.reshape(*k.shape[:2], 6, last_dim).permute(0, 2, 1, 3)
+      av = v.reshape(*v.shape[:2], 6, last_dim).permute(0, 2, 1, 3)
+      attn = Tensor.scaled_dot_product_attention(aq, ak, av)
+      wv = attn.permute(0, 2, 1, 3).flatten(start_dim=2)
+      return wv.linear(qkvo_weights[3]).realize(), k.realize(), v.realize()
+
+    num_blocks = 4
+
+    qkvo_weights = Tensor.rand(num_blocks, 4, 384, 384).realize()
+    self_attn_kv = [(None, None) for _ in range(num_blocks)]
+    jit_self_attn_kv = [(None, None) for _ in range(num_blocks)]
+
+    x = Tensor.rand(16, 2, 384).realize()
+
+    for b in range(num_blocks):
+      x, sk, sv = block(qkvo_weights[b], x)
+      self_attn_kv[b] = (sk, sv)
+      jit_self_attn_kv[b] = (sk, sv)
+
+    # jit_block = [block for _ in range(num_blocks)]
+    jit_block = [TinyJit(block) for _ in range(num_blocks)]
+    for i in range(40):
+      x = Tensor.rand(16, 1, 384).realize()
+      jit_x = x
+      for b in range(num_blocks):
+        (sk, sv) = self_attn_kv[b]
+        x, sk, sv = block(qkvo_weights[b], x, sk, sv)
+        self_attn_kv[b] = (sk, sv)
+
+        (jit_sk, jit_sv) = jit_self_attn_kv[b]
+        len = jit_sk.shape[1]
+        len_v = Variable("len", 1, 224).bind(len)
+        jit_sk = jit_sk.reshape(jit_sk.shape[0], len_v, jit_sk.shape[2])
+        jit_sv = jit_sv.reshape(jit_sv.shape[0], len_v, jit_sv.shape[2])
+
+        jit_x, jit_sk, jit_sv = jit_block[b](qkvo_weights[b], jit_x, jit_sk, jit_sv, jit_ctx={len_v.unbind()[0]: len})
+
+        jit_sk = jit_sk.reshape(jit_sk.shape[0], len+1, jit_sk.shape[2])
+        jit_sv = jit_sv.reshape(jit_sv.shape[0], len+1, jit_sv.shape[2])
+
+        jit_self_attn_kv[b] = (jit_sk, jit_sv)
+
+        np.testing.assert_allclose(sk.numpy(), jit_sk.numpy(), atol=1e-6, rtol=1e-6, err_msg=f'sk mismatch i={i}, block={b}')
+        np.testing.assert_allclose(sv.numpy(), jit_sv.numpy(), atol=1e-6, rtol=1e-6, err_msg=f'sv mismatch i={i}, block={b}')
+
+
 if __name__ == '__main__':
   unittest.main()
