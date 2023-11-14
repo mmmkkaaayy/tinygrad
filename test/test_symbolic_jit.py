@@ -164,5 +164,39 @@ class TestSymbolicJit(unittest.TestCase):
       np.testing.assert_allclose(symbolic, expected, atol=1e-6, rtol=1e-6)
     assert len(jf.jit_cache) == 1
 
+  def test_big_cat(self):
+    def f(x, cx): return cx.cat(x, dim=1).realize()
+
+    jf = TinyJit(f)
+
+    def cat(x, cx, jit=False):
+      len = cx.shape[1]
+      len_v = Variable("len", 1, 224).bind(len)
+      cx = cx.reshape(cx.shape[0], len_v, cx.shape[2])
+      cx = jf(x, cx) if jit else f(x, cx)
+      cx = cx.reshape(cx.shape[0], len+1, cx.shape[2])
+      return cx, np.sum(cx.numpy())
+
+    d = 2
+    cx = Tensor.zeros(d, 1, d).realize()
+    jit_cx = cx
+    for i in range(1, 222):
+      # extra Tensor() wrap needed to avoid "AssertionError: some input tensors not found"
+      x = Tensor(Tensor.full((d, 1, d), i).numpy()).realize()
+
+      cx, cx_sum = cat(x, cx)
+      jit_cx, jit_cx_sum = cat(x, jit_cx, jit=True)
+
+      if cx_sum != jit_cx_sum:
+        jit_cx = jit_cx.numpy()
+        bad_rows = []
+        for a in range(jit_cx.shape[0]):
+          for b in range(jit_cx.shape[1]):
+            arr = jit_cx[a][b]
+            if not np.all(arr == b):
+              bad_rows.append((a, b))
+              print(f"{(a, b)} Expected {b}", arr)
+        raise AssertionError(f"Failed at iteration {i}. Mismatched rows {bad_rows}")
+
 if __name__ == '__main__':
   unittest.main()
