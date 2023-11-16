@@ -3,7 +3,7 @@ import pathlib
 from examples.whisper import init_whisper, load_file_waveform, transcribe_file, transcribe_waveform
 from tinygrad.ops import Device
 
-@unittest.skipUnless(Device.DEFAULT == "METAL", "Some non-metal backends spend too long trying to allocate a 20GB array")
+# @unittest.skipUnless(Device.DEFAULT == "METAL", "Some non-metal backends spend too long trying to allocate a 20GB array")
 class TestWhisper(unittest.TestCase):
   @classmethod
   def setUpClass(cls):
