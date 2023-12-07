@@ -284,6 +284,8 @@ jobs:
       run: |
         METAL=1 python -c "from tinygrad import Device; assert Device.DEFAULT == 'METAL', Device.DEFAULT"
         METAL=1 DEBUG=4 FORWARD_ONLY=1 python3 test/test_ops.py TestOps.test_add
+    - name: Run whisper test
+      run: METAL=1 python -m pytest test/test_ops.py test/models/test_whisper.py
     - name: Run metal test
       run: METAL=1 python -m pytest -n=auto test/ --ignore=test/external --durations=20
     - name: Run ONNX
